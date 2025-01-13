@@ -1,0 +1,348 @@
+---
+title: "Reglas de Asociación"
+author: "Marta Martínez Guerra"
+date: "03/01/2025"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+    theme: lumen
+    highlight: tango
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Librerías utilizadas
+```{r, eval=TRUE,echo=TRUE,warning=FALSE, message=FALSE}
+library(arules)
+library(tidyverse)
+library(arulesViz)
+library(colorspace)
+library(writexl)
+
+```
+```{r, include= FALSE}
+datos1 <- read.csv("C:/Users/Marta Martínez/OneDrive/1Ciencia de Datos/Proyectos/Fuentes de datos/Assignment-1_Data.csv", sep = ";")
+
+```
+
+
+# Exploración inicial y preparación de los datos.
+
+A continuación, podemos ver una tabla que muestra los estadísticos básicos de cada variable, valores mínimos, máximos, media, y mediana.
+
+El campo CustomerID tiene valores nulos pero no los eliminamos porque no vamos a trabajar con esa columna.
+
+
+```{r}
+# Dimensión del dataset
+
+dim(datos1)
+
+# Resumen
+
+summary(datos1)
+
+
+```
+## ¿Cuántos productos diferentes tenemos?
+
+Como podemos ver en la tabla que se muestra a continuación con los primeros veinte artículos, tenemos un producto desconocido en el top de ventas, esto aparece porque el campo Itemname se han introducido valores "", no aparecen como valores nulos pero el campo está vacío
+
+```{r}
+knitr::kable(datos1[1:25,] %>%
+  group_by(Itemname) %>%
+  summarize(Ventas = n_distinct(Quantity)) %>%
+  arrange(desc(Ventas)))
+   
+   
+```
+
+### Preparación de los datos
+
+```{r}
+# ¿Cuántas filas sin nombre de producto tenemos?
+sum(datos1$Itemname == "")
+
+```
+
+### Visualización de algunas filas vacias
+```{r}
+
+filas_vacias <- datos1[datos1$Itemname == "", ]
+head(filas_vacias, n=20)
+```
+### Eliminación de las filas con el campo Itemname vacío
+
+```{r}
+datos1$Itemname[datos1$Itemname == ""] <- NA
+datos2 <-  datos1 %>% filter(!is.na(Itemname))
+dim(datos2)
+```
+## Visualización inicial, diez productos más vendidos
+```{r}
+top_10_datos <- datos2 %>%
+  group_by(Itemname) %>%  
+  summarize(Ventas = n_distinct(Quantity)) %>%
+  #summarise(Total = sum(Ventas)) %>%
+  top_n(10, wt = Ventas)    
+
+ggplot(top_10_datos, aes(x = reorder(Itemname, Ventas), y = Ventas)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  coord_flip() +
+  labs(x = "Categoría", y = "Total", title = "Top 10 de productos más vendidos") +
+  theme_minimal()
+   
+```
+
+# Preparación de los datos, creación de un dataset transaccional
+
+```{r}
+#Split en grupos
+
+data_list = split(datos2$Itemname,datos2$BillNo)
+
+#Transformación a un dataset transaccional
+data_trx = as(data_list,"transactions")
+
+
+```
+
+## Inspección del dataset, 3 primeras transacciones
+```{r}
+inspect(head(data_trx[1:3]))
+```
+
+
+
+
+# Análisis de los productos más vendidos teniendo en cuenta cada compra o transacción
+
+
+## Top 10 de productos más vendidos en el dataset transaccional
+
+Como vemos este datos varía en comparación con el gráfico anterior debido a que no se tiene en cuenta cuando se comprar varias unidades del mismo artículo en una transacción, solo se tiene en cuente una unidad.
+
+```{r}
+
+itemFrequencyPlot(data_trx, cex.names =graphics::par("cex.axis"), topN = 10, col = "blue", horiz = TRUE, type ="absolute")
+title("Top 10 de productos más vendidos")
+```
+
+## Tamaño de las transacciones 
+```{r}
+# Resumen
+size_trans <- data.frame(tamanho = size(data_trx))
+summary(size_trans)
+
+# Valor máximo
+print(paste("Valor máximo:", max(size_trans)))
+
+
+# Valor mínimo
+print(paste("Valor máximo:", min(size_trans)))
+```
+
+## Representación gráfica del tamaño de cada transacción
+```{r}
+
+# Distribucion del tamanho de todas las transacciones
+ggplot(size_trans, aes(x = tamanho)) +
+  geom_histogram(fill = "blue") +
+  labs(x = "Tamaño de las transacciones", y = "Densidad", title = "Tamaño de las transacciones") +
+  theme_minimal() 
+```
+## Tamaño de las transacciones por cuantiles
+```{r}
+summary(size_trans)
+```
+
+```{r}
+boxplot(size_trans$tamanho,col="blue", main = "Tamaño de las transacciones")
+```
+
+# Obtención de las Reglas de asociación con el algoritmo Apriori
+
+## Establecemos el soporte y la confianza
+
+El valor de soporte obtenido nos da problemas a realizar el cálculo por lo que elegimos un soporte mayor, de 0.01, y una confianza de al menos un 90% para obtener unas reglas fiables.
+
+```{r}
+# Umbral de soporte
+soporte <- 25/dim(data_trx)[1]
+soporte
+
+```
+## Tamaño del dataset 
+
+Para reducir el tamaño del dataset, eliminamos las transacciones en las que sólo aparece un elemento, de esta manera reducimos el tiempo de cálculo del algoritmo, eliminando 2239 filas
+
+```{r}
+transacciones <- data_trx[size_trans > 1]
+dim(data_trx)
+dim(transacciones)
+
+```
+Utilizamos un soporte de 0.01 y una confianza del 90%
+
+
+```{r}
+articulos_frecuentes <- apriori(data = transacciones, 
+                  parameter = list(support = 0.01,
+                                   confidence = 0.90,
+                                   target = "frequent itemsets"),
+                  control = list(verbose = FALSE))
+
+
+```
+
+## Artículos frecuentes
+
+```{r}
+print(paste("articulos frecuentes:", length(articulos_frecuentes)))
+```
+```{r}
+summary(articulos_frecuentes)
+```
+## Reglas de asociación
+
+
+```{r}
+reglas <- apriori(data = transacciones, 
+                  parameter = list(support = 0.01,
+                                   confidence = 0.90,
+                                   target = "rules"),
+                  control = list(verbose = FALSE))
+
+```
+
+## Reglas generadas
+
+```{r}
+print(paste("Reglas generadas:", length(reglas)))
+```
+# Informe 
+
+## Reglas obtenidas ordenadas por confianza
+
+1. Hemos obtenido un total de 70 reglas.
+
+2. Análisis de la regla número 1:
+
+* El 1.12% de todas las transacciones en el conjunto de datos incluyen ambos ítems: "BEADED CRYSTAL HEART PINK ON STICK" y "DOTCOM POSTAGE".
+Aunque el soporte sea bajo, esto puede deberse a que los productos son poco comunes o que no se venden frecuentemente.
+
+* Hay una probabilidad del 97.57% de que alguien que compra "BEADED CRYSTAL HEART PINK ON STICK" también compre "DOTCOM POSTAGE", la asociación es muy fuerte y confiable: la mayoría de los clientes que compran el producto del LHS también terminan comprando el del RHS.
+
+* Aproximadamente el 1.15% de las transacciones contienen "BEADED CRYSTAL HEART PINK ON STICK". Esto nos dice que este ítem del LHS no es particularmente común en las compras, pero cuando ocurre, tiende a estar asociado con el RHS.
+
+* Aunque no está dado directamente, el lift mide si la relación entre los productos es estadísticamente significativa.
+Un lift > 1 (muy probable aquí, dada la alta confianza) sugeriría que la asociación entre "BEADED CRYSTAL HEART PINK ON STICK" y "DOTCOM POSTAGE" no ocurre al azar, sino que tienen una relación importante.
+
+3. Calidad:
+
+* Las reglas obtenidas tienen una relación fuerte, hemos obtenido un gran número de reglas con una confianza por encima del 90%, y existe una asociación determinante entre los productos. El nivel de confianza es lo suficientemente alto como para tomar decisiones basadas en esta regla.
+
+4. Usos en Marketing, se puede usar esta regla para estrategias como:
+
+* Ventas cruzadas (cross-selling): Promocionar "DOTCOM POSTAGE" junto con "BEADED CRYSTAL HEART PINK ON STICK".
+Paquetes de productos: Crear un paquete que incluya ambos ítems.
+
+* Descuentos combinados: Ofrecer descuentos en "DOTCOM POSTAGE" si alguien compra "BEADED CRYSTAL HEART PINK ON STICK".
+
+* Optimización de Inventario: Sabiendo que los clientes que compran uno de estos productos casi siempre compran el otro, por lo que se podrían tomar una serie de medidas como, Asegurar que ambos productos estén disponibles simultáneamente, colocarlos juntos en la tienda física o en una página web para facilitar las compras.
+
+5. Precauciones:
+
+* Aunque una confianza del 97.57% es muy alta, es importante complementarla con otros parámetros, como el soporte y el lift, para entender completamente la importancia de la regla.
+
+* Soporte bajo (1.12%): Aunque la confianza sea alta, el soporte es relativamente bajo. Esto significa que la regla aplica solo a un pequeño porcentaje del total de transacciones.
+Si el negocio está interesado en captar un mercado más amplio, esta regla puede no ser suficiente como para ser una prioridad.
+
+*  Lift como validador: Si el lift es significativamente mayor que 1, esto indicará que la relación no es aleatoria y que el LHS incrementa la probabilidad del RHS más allá de lo esperado por azar. Una confianza alta sin un lift fuerte podría significar que el RHS ya es muy común, independientemente del LHS.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+```{r}
+inspect(sort(reglas, decreasing = TRUE, by = "confidence"))
+```
+# Visualización de los datos
+
+En esta sección aparecen diferentes tipos de visualización en las que se muestran los parámetros obtenidos
+
+## Gráfico de dispersión
+
+```{r}
+plot(reglas, method = NULL, measure = "support", shading = "lift",main = "70 Reglas",
+interactive = NULL, engine = "default", data = NULL, control = NULL, jitter = 1)
+
+```
+## Gráfico de dispersión interactivo
+
+
+```{r}
+plot(reglas, engine = "htmlwidget", main ="70 Reglas", jitter=1)
+
+```
+
+
+## Gráfico de dispersión método two-key 
+
+```{r}
+plot(reglas, method = "two-key plot", main= "70 Reglas", jitter = 1)
+```
+
+## Matriz completa de reglas
+
+```{r}
+subreglas <- subset(reglas, lift>5)
+subreglas
+## 2D matrix with shading
+plot(reglas, method="matrix", main = "Matriz de 70 Reglas")
+
+```
+
+## Gráfico 3D
+
+```{r}
+## 3D matrix
+
+plot(reglas, method="matrix", engine = "3d", main = "Representación en 3D", col = "red")
+```
+
+
+## Visualización de las 50 reglas más significativas
+
+```{r}
+
+plot(reglas, method = "graph", control = list(verbose = TRUE),  max=50)
+
+
+```
+
+
+
+
+
